@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.github.kittinunf.fuel.core.extensions.jsonBody
+import com.github.kittinunf.fuel.httpDelete
 import com.github.kittinunf.fuel.httpGet
 import com.github.kittinunf.fuel.httpPost
 import com.github.kittinunf.result.Result
@@ -64,6 +65,30 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnCreate).setOnClickListener {
             hideKeyboard()
             createNewLoan()
+        }
+        findViewById<Button>(R.id.btnGetByMember).setOnClickListener {
+            hideKeyboard()
+            val memberId = inputIdEditText.text.toString()
+            if (memberId.isNotEmpty()) {
+                getLoansByMemberId(memberId)
+            } else {
+                Toast.makeText(this, "Please enter a Member ID.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        findViewById<Button>(R.id.btnDelete).setOnClickListener {
+            hideKeyboard()
+            val idText = inputIdEditText.text.toString()
+            if (idText.isNotEmpty()) {
+                try {
+                    val id = idText.toInt()
+                    deleteLoanById(id)
+                } catch (e: NumberFormatException) {
+                    Toast.makeText(this, "Please enter a valid numeric Loan ID.",
+                        Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(this, "Please enter a Loan ID.", Toast.LENGTH_SHORT).show()
+            }
         }
 
     }
@@ -148,7 +173,37 @@ class MainActivity : AppCompatActivity() {
     private fun getLoansByMemberId(memberId: String) {
         val url = "https://opsc.azurewebsites.net/loans/member/$memberId"
         outputTextView.text = "Fetching loans for member: $memberId..."
-        //finish for homework
+        executor.execute {
+            url.httpGet().responseString { _, _, result ->
+                handler.post {
+                    when (result) {
+                        is Result.Success -> {
+                            try {
+                                val loans = Gson().fromJson(result.get(),
+                                    Array<Loan>::class.java).toList()
+                                if (loans.isNotEmpty()) {
+                                    val formattedOutput = loans.joinToString(separator = "\n\n") { loan ->
+                                        "Loan ID: ${loan.loanID}\nAmount: ${loan.amount}\nMember ID:" +
+                                                " ${loan.memberID}\nMessage: ${loan.message}"
+                                    }
+                                    outputTextView.text = formattedOutput
+                                } else {
+                                    outputTextView.text = "No loans found for member $memberId."
+                                }
+                            } catch (e: JsonSyntaxException) {
+                                Log.e("GetLoansByMemberId", "JSON parsing error: ${e.message}")
+                                outputTextView.text = "Error: Could not parse server response."
+                            }
+                        }
+                        is Result.Failure -> {
+                            val ex = result.getException()
+                            Log.e("GetLoansByMemberId", "API Error: ${ex.message}")
+                            outputTextView.text = "Error: Could not fetch loans."
+                        }
+                    }
+                }
+            }
+        }
     }
     private fun createNewLoan() {
         val url = "https://opsc.azurewebsites.net/loans/"
@@ -190,7 +245,30 @@ class MainActivity : AppCompatActivity() {
                 }
         }
     }
+    private fun deleteLoanById(id: Int) {
+        val url = "https://opsc.azurewebsites.net/loans/$id"
+        outputTextView.text = "Deleting loan with ID: $id..."
 
+        executor.execute {
+            url.httpDelete().response { _, response, _ ->
+                handler.post {
+                    // A 204 No Content status code means the deletion was successful.
+                    when (response.statusCode) {
+                        204 -> {
+                            outputTextView.text = "Successfully deleted loan with ID: $id"
+                        }
+                        404 -> {
+                            outputTextView.text = "Loan with ID $id not found."
+                        }
+                        else -> {
+                            Log.e("DeleteLoanById", "API Error: Status code ${response.statusCode}")
+                            outputTextView.text = "Error: Could not delete loan. Status: ${response.statusCode}"
+                        }
+                    }
+                }
+            }
+        }
+    }
     private fun hideKeyboard() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(inputIdEditText.windowToken, 0)
